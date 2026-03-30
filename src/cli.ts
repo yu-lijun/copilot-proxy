@@ -388,23 +388,23 @@ function startServer(): void {
 </head>
 <body>
   <div class="container">
-    <h1>🚀 GitHub Copilot API 代理</h1>
+    <h1>GitHub Copilot API 代理</h1>
     <p class="subtitle">让 Claude Code / Codex 等工具接入 Copilot</p>
     
     ${githubToken
-        ? `<div class="status connected">✅ 已连接</div>`
-        : `<div class="status disconnected">❌ 未登录</div>
-         <br><a class="btn" href="/login">🔐 登录 GitHub</a>`
+        ? `<div class="status connected">已连接</div>`
+        : `<div class="status disconnected">未登录</div>
+         <br><a class="btn" href="/login">登录 GitHub</a>`
       }
     
     <div class="endpoints">
-      <div><strong>📡 API 端点:</strong></div>
+      <div><strong>API 端点:</strong></div>
       <br>
-      <div><code>POST /v1/chat/completions</code> - OpenAI 兼容</div>
-      <div><code>POST /v1/messages</code> - Anthropic 兼容</div>
-      <div><code>GET  /health</code> - 健康检查</div>
+      <div><code>POST http://localhost:${PORT}/v1/chat/completions</code> - OpenAI 兼容</div>
+      <div><code>POST http://localhost:${PORT}/v1/messages</code> - Anthropic 兼容</div>
+      <div><code>GET  http://localhost:${PORT}/health</code> - 健康检查</div>
       <br>
-      <div><strong>📋 可用模型:</strong></div>
+      <div><strong>可用模型:</strong></div>
       <div style="color: #888; margin-top: 5px;">claude-sonnet-4.5, gpt-5, gemini-2.5-pro, ...</div>
     </div>
   </div>
@@ -446,7 +446,7 @@ function startServer(): void {
 </head>
 <body>
   <div class="container">
-    <h1>🔐 GitHub 授权</h1>
+    <h1>GitHub 授权</h1>
     <p>请在打开的页面中输入:</p>
     <div class="code">${user_code}</div>
     <a class="btn" href="${verification_uri}" target="_blank">打开授权页面</a>
@@ -628,8 +628,8 @@ function startServer(): void {
       console.log(`${colors.green}✅ 已连接${colors.reset}\n`);
     }
 
-    console.log(`${colors.yellow}🌐 Web 界面:${colors.reset} http://localhost:${PORT}`);
-    console.log(`${colors.yellow}📡 API 端点:${colors.reset}`);
+    console.log(`Web 界面:  http://localhost:${PORT}`);
+    console.log(`API 端点:`);
     console.log(`   OpenAI:     POST http://localhost:${PORT}/v1/chat/completions`);
     console.log(`   Anthropic:  POST http://localhost:${PORT}/v1/messages`);
     console.log(`   模型列表:   GET  http://localhost:${PORT}/v1/models\n`);
