@@ -16,16 +16,60 @@ const GITHUB_CLIENT_ID = 'Iv1.b507a08c87ecfe98'; // GitHub 官方 Copilot OAuth 
 const PORT = parseInt(process.env.PORT || '4141');
 const COPILOT_CHAT_URL = 'https://api.githubcopilot.com/chat/completions';
 
-// 模型列表
-const MODELS = [
-  { id: 'claude-sonnet-4.5', name: 'Claude Sonnet 4.5', provider: 'Anthropic' },
-  { id: 'claude-opus-4.5', name: 'Claude Opus 4.5', provider: 'Anthropic' },
-  { id: 'claude-sonnet-4', name: 'Claude Sonnet 4', provider: 'Anthropic' },
-  { id: 'claude-opus-4', name: 'Claude Opus 4', provider: 'Anthropic' },
-  { id: 'gpt-5', name: 'GPT-5', provider: 'OpenAI' },
-  { id: 'gpt-4o', name: 'GPT-4o', provider: 'OpenAI' },
-  { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', provider: 'Google' },
-];
+// 模型缓存
+interface ModelEntry {
+  id: string;
+  name: string;
+  vendor?: string;
+  version?: string;
+  [key: string]: any;
+}
+let modelsCache: ModelEntry[] | null = null;
+let modelsCacheExpiry = 0;
+const MODELS_CACHE_TTL = 60 * 60 * 1000; // 1 小时
+const COPILOT_MODELS_URL = 'https://api.githubcopilot.com/models';
+
+async function fetchModels(): Promise<ModelEntry[]> {
+  // 有缓存且未过期，直接返回
+  if (modelsCache && Date.now() < modelsCacheExpiry) {
+    return modelsCache;
+  }
+
+  // 需要 token 才能拉模型列表
+  const token = copilotToken && Date.now() < copilotTokenExpiry - 5 * 60 * 1000
+    ? copilotToken
+    : githubToken;
+
+  if (!token) {
+    // 未登录时返回空列表
+    return [];
+  }
+
+  try {
+    const response = await axios.get(COPILOT_MODELS_URL, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        'Copilot-Integration-Id': 'vscode-chat',
+        'Editor-Version': 'vscode/1.99.1',
+        'Editor-Plugin-Version': 'copilot-chat/0.26.7',
+        'User-Agent': 'GitHubCopilotChat/0.26.7',
+        'x-github-api-version': '2025-04-01',
+      },
+      timeout: 10000,
+    });
+    // 响应可能是 { data: [...] } 或直接是数组
+    const raw = Array.isArray(response.data)
+      ? response.data
+      : (response.data?.data ?? []);
+    modelsCache = raw;
+    modelsCacheExpiry = Date.now() + MODELS_CACHE_TTL;
+    return modelsCache!;
+  } catch (e: any) {
+    console.error(`${colors.yellow}⚠${colors.reset} 获取模型列表失败: ${e.message}`);
+    return modelsCache ?? []; // 失败时返回旧缓存或空
+  }
+}
 
 // ============ 配置管理 ============
 interface Config {
@@ -94,7 +138,7 @@ const colors = {
   magenta: '\x1b[35m', cyan: '\x1b[36m', white: '\x1b[37m',
 };
 
-function printBanner(): void {
+async function printBanner(showModels = false): Promise<void> {
   console.clear();
   console.log(`
 ${colors.cyan}╔═══════════════════════════════════════════════════════════════╗
@@ -103,10 +147,17 @@ ${colors.cyan}╔═════════════════════
 ║   ${colors.dim}让 Claude Code / Codex 等工具接入 Copilot${colors.cyan}            ║
 ║                                                               ║
 ╚═══════════════════════════════════════════════════════════════╝${colors.reset}
-
-${colors.yellow}📋 可用模型:${colors.reset}`);
-  MODELS.forEach(m => console.log(`   ${colors.green}•${colors.reset} ${m.id.padEnd(22)} ${colors.dim}(${m.provider})${colors.reset}`));
-  console.log('');
+`);
+  if (showModels) {
+    const models = await fetchModels();
+    if (models.length > 0) {
+      console.log(`${colors.yellow}📋 可用模型:${colors.reset}`);
+      models.forEach(m => console.log(`   ${colors.green}•${colors.reset} ${String(m.id).padEnd(30)} ${colors.dim}(${m.vendor ?? m.owned_by ?? ''})${colors.reset}`));
+    } else {
+      console.log(`${colors.yellow}📋 可用模型:${colors.reset} ${colors.dim}(登录后可查看)${colors.reset}`);
+    }
+    console.log('');
+  }
 }
 
 // ============ Copilot Token 获取 ============
@@ -161,7 +212,7 @@ const argv = yargs
     default: false
   })
   .command('login', '登录 GitHub 账号', {}, async () => {
-    printBanner();
+    await printBanner();
     console.log(`${colors.yellow}🔐 正在发起授权请求...${colors.reset}\n`);
 
     const { device_code, user_code, verification_uri, interval } = await getDeviceCode();
@@ -199,7 +250,7 @@ const argv = yargs
     console.log(`${colors.green}✅ 已退出登录${colors.reset}`);
   })
   .command('status', '查看连接状态', {}, async () => {
-    printBanner();
+    await printBanner();
 
     if (!githubToken) {
       console.log(`${colors.red}❌ 未登录${colors.reset}\n`);
@@ -223,13 +274,18 @@ const argv = yargs
     console.log(`   Anthropic 兼容: ${colors.cyan}http://localhost:${PORT}/v1/messages${colors.reset}`);
     console.log(`   健康检查: ${colors.cyan}http://localhost:${PORT}/health${colors.reset}\n`);
   })
-  .command('models', '查看可用模型', {}, () => {
-    printBanner();
+  .command('models', '查看可用模型', {}, async () => {
+    await printBanner();
     console.log(`${colors.yellow}📋 可用模型:${colors.reset}\n`);
-    MODELS.forEach(m => {
-      console.log(`   ${colors.green}•${colors.reset} ${colors.bright}${m.id}${colors.reset}`);
-      console.log(`     ${colors.dim}${m.provider}${colors.reset}\n`);
-    });
+    const models = await fetchModels();
+    if (models.length === 0) {
+      console.log(`   ${colors.dim}(未登录或无法获取，请先运行 copilot-cli login)${colors.reset}\n`);
+    } else {
+      models.forEach(m => {
+        console.log(`   ${colors.green}•${colors.reset} ${colors.bright}${m.id}${colors.reset}`);
+        console.log(`     ${colors.dim}${m.vendor ?? m.owned_by ?? ''}${colors.reset}\n`);
+      });
+    }
   })
   .command('$0', '启动代理服务', {}, (argv) => {
     // 后台启动
@@ -541,21 +597,28 @@ function startServer(): void {
     }
   });
 
-  // 模型列表
-  app.get('/v1/models', (req, res) => {
-    res.json({
-      data: MODELS.map(m => ({
-        id: m.id,
-        object: 'model',
-        created: 1700000000,
-        owned_by: m.provider.toLowerCase()
-      }))
-    });
+  // 模型列表（动态从 Copilot API 获取）
+  app.get('/v1/models', async (req, res) => {
+    try {
+      const models = await fetchModels();
+      res.json({
+        object: 'list',
+        data: models.map(m => ({
+          ...m,
+          id: m.id,
+          object: 'model',
+          created: m.created ?? 1700000000,
+          owned_by: m.vendor ?? m.owned_by ?? 'github',
+        }))
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: { message: e.message } });
+    }
   });
 
   // 启动
-  app.listen(PORT, () => {
-    printBanner();
+  app.listen(PORT, async () => {
+    await printBanner(true);
 
     if (!githubToken) {
       console.log(`${colors.red}❌ 未登录${colors.reset}\n`);
