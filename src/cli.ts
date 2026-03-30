@@ -257,7 +257,7 @@ const argv = yargs
     // 启动 HTTP 服务器
     startServer();
   })
-  .demandCommand()
+  .recommendCommands()
   .help()
   .alias('h', 'help')
   .version('1.0.0')
@@ -333,7 +333,7 @@ function startServer(): void {
 <body>
   <div class="container">
     <h1>🚀 GitHub Copilot API 代理</h1>
-    <p class="subtitle">让 Claude Code / Cursor 等工具接入 Copilot</p>
+    <p class="subtitle">让 Claude Code / Codex 等工具接入 Copilot</p>
     
     ${githubToken
         ? `<div class="status connected">✅ 已连接</div>`
@@ -394,9 +394,26 @@ function startServer(): void {
     <p>请在打开的页面中输入:</p>
     <div class="code">${user_code}</div>
     <a class="btn" href="${verification_uri}" target="_blank">打开授权页面</a>
-    <p style="margin-top: 20px; color: #888;">授权成功后页面会自动刷新</p>
+    <p style="margin-top: 20px; color: #888;" id="status-msg">等待授权中，请在浏览器中完成操作...</p>
   </div>
-  <script>setTimeout(() => window.location.href = '/poll', 3000);</script>
+  <script>
+    function poll() {
+      fetch('/poll')
+        .then(r => r.json())
+        .then(data => {
+          if (data.status === 'done') {
+            window.location.href = '/';
+          } else if (data.status === 'error') {
+            document.getElementById('status-msg').textContent = '授权失败: ' + data.message;
+          } else {
+            // pending，继续轮询
+            setTimeout(poll, 3000);
+          }
+        })
+        .catch(() => setTimeout(poll, 3000));
+    }
+    setTimeout(poll, 3000);
+  </script>
 </body>
 </html>
       `);
@@ -405,26 +422,40 @@ function startServer(): void {
     }
   });
 
-  // 轮询 token
+  // 轮询 token（每次只尝试一次，由前端定时轮询，避免长连接阻塞）
   app.get('/poll', async (req, res) => {
     if (!pendingOAuth) {
-      return res.redirect('/');
+      return res.json({ status: 'done' });
     }
 
     try {
-      const token = await pollAccessToken(pendingOAuth.device_code, pendingOAuth.interval || 5);
-      githubToken = token;
-      config.githubToken = token;
-      saveConfig(config);
-      pendingOAuth = null;
-      res.redirect('/');
+      const response = await axios.post(
+        'https://github.com/login/oauth/access_token',
+        {
+          client_id: GITHUB_CLIENT_ID,
+          device_code: pendingOAuth.device_code,
+          grant_type: 'urn:ietf:params:oauth:grant-type:device_code'
+        },
+        { headers: { Accept: 'application/json' } }
+      );
+
+      if (response.data.access_token) {
+        githubToken = response.data.access_token;
+        config.githubToken = githubToken;
+        saveConfig(config);
+        pendingOAuth = null;
+        return res.json({ status: 'done' });
+      }
+
+      if (response.data.error === 'expired_token') {
+        pendingOAuth = null;
+        return res.json({ status: 'error', message: '授权码已过期' });
+      }
+
+      // authorization_pending / slow_down → 继续等待
+      return res.json({ status: 'pending' });
     } catch (e: any) {
-      res.send(`
-        <script>
-          alert('授权失败: ${e.message}');
-          window.location.href = '/';
-        </script>
-      `);
+      return res.json({ status: 'error', message: e.message });
     }
   });
 
@@ -469,7 +500,7 @@ function startServer(): void {
   app.post('/v1/messages', checkAuth, async (req, res) => {
     try {
       const { model, messages, max_tokens, system } = req.body;
-      const copilotModel = 'claude-sonnet-4.5'; // 默认
+      const copilotModel = model || 'claude-sonnet-4.5'; // 使用传入的 model，默认 claude-sonnet-4.5
       const copilotTokenValue = await getCopilotToken();
 
       const openAIMessages: any[] = [];
@@ -544,7 +575,7 @@ function startServer(): void {
 
 async function testConnection(): Promise<void> {
   try {
-    const token = await getCopilotToken();
+    await getCopilotToken();
     console.log(`${colors.green}✓${colors.reset} Copilot API 测试成功\n`);
   } catch (e: any) {
     console.log(`${colors.yellow}⚠${colors.reset} Copilot API: ${e.message}\n`);
